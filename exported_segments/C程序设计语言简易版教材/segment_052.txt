@@ -1,0 +1,15 @@
+=== 文档片段 52 ===
+源文件：/Users/renzejun/Desktop/知识库素材/C程序设计语言简易版教材.docx
+元数据：{'source': '/Users/renzejun/Desktop/知识库素材/C程序设计语言简易版教材.docx'}
+
+内容：
+FILE *fp = fopen("file.txt", "r");
+
+fclose(fp);
+
+文件的读写：常见的文件操作函数包括`fgetc`、`fputc`、`fscanf`、`fprintf`等。
+
+  char ch = fgetc(fp); fputc('A', fp);
+
+总结
+==================================================
