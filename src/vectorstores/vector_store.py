@@ -5,6 +5,8 @@ from langchain.schema import Document
 from langchain_community.vectorstores import Chroma
 from langchain.embeddings.base import Embeddings
 from config.settings import CHROMA_PERSIST_DIR, LOADED_DOCUMENTS_FILE, SIMILARITY_THRESHOLD, TOP_K_RESULTS
+from chromadb import PersistentClient
+from chromadb.config import Settings
 
 
 class VectorStore:
@@ -27,10 +29,7 @@ class VectorStore:
         if os.path.exists(CHROMA_PERSIST_DIR):
             print("找到已存在的知识库目录")
             try:
-                from chromadb.config import Settings
-                from chromadb import PersistentClient
-
-                print("初始化 ChromaDB 客户端...")
+                print("开始初始化 ChromaDB 客户端...")
                 client = PersistentClient(
                     path=CHROMA_PERSIST_DIR,
                     settings=Settings(
@@ -38,21 +37,42 @@ class VectorStore:
                         is_persistent=True
                     )
                 )
+                print("ChromaDB 客户端初始化完成")
 
-                print("创建 Chroma 向量存储...")
+                print("开始创建 Chroma 向量存储...")
                 self.vectorstore = Chroma(
                     client=client,
                     embedding_function=self.embeddings,
                 )
-                print("成功加载已存在的向量存储")
+                print("Chroma 向量存储创建完成")
 
-                # 检查集合是否存在
+                # 获取所有集合
+                print("开始获取集合信息...")
                 collections = client.list_collections()
                 print(f"发现的集合数量：{len(collections)}")
-                for collection in collections:
-                    print(f"集合名称：{collection.name}, 文档数量：{collection.count()}")
 
+                if len(collections) > 0:
+                    for collection in collections:
+                        print(f"\n集合名称：{collection.name}")
+                        print(f"文档数量：{collection.count()}")
+
+                        # 获取集合中的所有数据
+                        print(f"开始获取集合 {collection.name} 的数据...")
+                        data = collection.get()
+                        print(f"获取到 {len(data.get('documents', []))} 个文档")
+
+                        for i, (doc, metadata) in enumerate(zip(data.get('documents', []), data.get('metadatas', [])), 1):
+                            if i <= 3:  # 只显示前3个文档
+                                print(f"\n文档 {i}:")
+                                print(f"内容: {doc[:100]}...")  # 显示前100个字符
+                                print(f"元数据: {metadata}")
+                else:
+                    print("没有找到任何集合")
+
+                print("开始加载文档列表...")
                 self._load_document_list()
+                print("文档列表加载完成")
+
             except Exception as e:
                 print(f"加载向量存储时出错：{str(e)}")
                 import traceback
@@ -60,7 +80,35 @@ class VectorStore:
                 print(traceback.format_exc())
                 self.vectorstore = None
         else:
-            print("知识库目录不存在，等待新文档加载...")
+            print("知识库目录不存在，创建新的向量存储...")
+            try:
+                # 创建目录
+                os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
+
+                # 初始化新的客户端和向量存储
+                client = PersistentClient(
+                    path=CHROMA_PERSIST_DIR,
+                    settings=Settings(
+                        anonymized_telemetry=False,
+                        is_persistent=True
+                    )
+                )
+                self.vectorstore = Chroma(
+                    client=client,
+                    embedding_function=self.embeddings,
+                )
+                print("新的向量存储创建完成")
+
+                # 初始化空的文档列表
+                self.loaded_documents = []
+                self._save_document_list()
+
+            except Exception as e:
+                print(f"创建新向量存储时出错：{str(e)}")
+                import traceback
+                print("错误详情：")
+                print(traceback.format_exc())
+                self.vectorstore = None
 
     def _load_document_list(self):
         """加载已处理的文档列表"""
@@ -86,16 +134,28 @@ class VectorStore:
     def add_documents(self, documents: List[str], source: str):
         """添加文档到向量存储"""
         try:
+            # 检查文档是否已存在
+            if source in self.loaded_documents:
+                print(f"\n文档 {source} 已存在于知识库中，跳过加载...")
+                return
+
             # 添加到向量存储
-            self.vectorstore.add_documents([
-                Document(page_content=text, metadata={"source": source})
-                for text in documents
-            ])
+            docs_to_add = []
+            for text in documents:
+                # 如果输入已经是 Document 对象，直接使用其 page_content
+                if isinstance(text, Document):
+                    doc = Document(page_content=text.page_content,
+                                   metadata={"source": source})
+                else:
+                    doc = Document(page_content=str(text),
+                                   metadata={"source": source})
+                docs_to_add.append(doc)
+
+            self.vectorstore.add_documents(docs_to_add)
 
             # 更新已加载文档列表
-            if source not in self.loaded_documents:
-                self.loaded_documents.append(source)
-                self._save_document_list()
+            self.loaded_documents.append(source)
+            self._save_document_list()
 
         except Exception as e:
             print(f"添加文档时出错：{str(e)}")
