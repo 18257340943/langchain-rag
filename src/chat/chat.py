@@ -30,6 +30,16 @@ class Chat:
         }
         self.vector_store = vector_store
         self.conversation_history: List[Dict[str, str]] = []
+        self.current_teacher: Optional[str] = None  # 当前选择的教师
+
+    def set_teacher(self, teacher: str):
+        """设置当前对话的教师
+
+        Args:
+            teacher: 教师名称
+        """
+        self.current_teacher = teacher
+        print(f"\n已切换到 {teacher} 的知识库")
 
     def chat(self, message: str) -> str:
         """处理用户消息并返回回复
@@ -48,9 +58,6 @@ class Chat:
 
         # 从知识库检索相关内容
         context = self._get_context(message)
-
-        if not context and self.vector_store.vectorstore:
-            return "抱歉，不在知识库范围内"
 
         # 准备对话请求
         data = {
@@ -103,26 +110,18 @@ class Chat:
             print("\n提示：知识库为空，将使用模型的通用知识回答")
             return None
 
-        print("\n正在从知识库检索相关内容...")
-        docs = self.vector_store.search(query)
+        # 从知识库检索相关内容
+        docs = self.vector_store.search(query, teacher=self.current_teacher)
 
+        # 如果没有找到相关内容，返回 None
         if not docs:
             print("\n提示：未找到相关内容，将使用模型的通用知识回答")
             return None
 
-        # 提取包含查询关键词的句子
+        # 直接使用检索到的文档内容
         context_parts = []
         for doc, score in docs:
-            sentences = [
-                s for s in doc.page_content.split('。')
-                if any(word in s for word in query.split())
-            ]
-            if sentences:
-                context_parts.append("。".join(sentences))
+            context_parts.append(doc.page_content.strip())
 
-        if not context_parts:
-            print("\n提示：未找到足够相关的内容，将使用模型的通用知识回答")
-            return None
-
-        context = "\n".join(context_parts)
+        context = "\n\n".join(context_parts)
         return f"参考信息：\n{context}\n\n请基于以上信息回答：{query}"

@@ -1,9 +1,11 @@
 import os
+from dotenv import load_dotenv
 from config.settings import SILICONFLOW_API_KEY, EMBEDDING_MODELS
 from embeddings.silicon_flow import SiliconFlowEmbeddings
 from document_loaders.document_loader import DocumentLoader
 from vectorstores.vector_store import VectorStore
 from chat.chat import Chat
+from teacher.teacher_manager import TeacherManager
 
 
 def get_api_key() -> str:
@@ -25,9 +27,15 @@ def select_model() -> str:
     return EMBEDDING_MODELS.get(choice, EMBEDDING_MODELS["1"])
 
 
-def load_documents(vector_store: VectorStore):
-    """加载文档到知识库"""
-    print("\n请输入要加载的文档路径（支持doc/docx/txt格式）")
+def load_documents(vector_store: VectorStore, teacher: str):
+    """加载文档到知识库
+
+    Args:
+        vector_store: 向量存储实例
+        teacher: 教师名称
+    """
+    print(f"\n正在为 {teacher} 加载文档")
+    print("请输入要加载的文档路径（支持doc/docx/txt格式）")
     print("输入完成后，请按回车键，然后输入 'done' 结束输入")
 
     while True:
@@ -47,8 +55,9 @@ def load_documents(vector_store: VectorStore):
             splits_file = DocumentLoader.save_splits_info(splits, file_path)
             print(f"切片信息已保存到：{splits_file}")
 
-            # 添加到向量存储
-            vector_store.add_documents(splits, file_path)
+            # 添加到向量存储，指定教师
+            vector_store.add_documents(splits, file_path, teacher)
+            print(f"已将文档添加到 {teacher} 的知识库")
 
         except Exception as e:
             print(f"处理文档时出错：{str(e)}")
@@ -56,29 +65,53 @@ def load_documents(vector_store: VectorStore):
 
 def chat_loop(chat: Chat):
     """交互式对话循环"""
-    print("\n欢迎使用聊天系统！输入'退出'结束对话。")
+    print("\n=== 对话模式 ===")
+    print("输入问题开始对话")
+    print("输入 'q'、'quit' 或 '退出' 可以返回主菜单")
+    print("-" * 30)
 
     while True:
-        message = input("\n请输入你的消息：")
-        if message.lower() == '退出':
+        message = input("\n请输入你的问题（输入 q 退出）：").strip()
+        if message.lower() in ['q', 'quit', '退出']:
+            print("\n正在返回主菜单...")
             break
+
+        if not message:
+            continue
 
         response = chat.chat(message)
         print(f"\n回答：{response}")
 
 
 def main():
-    """主程序入口"""
-    # 获取API密钥
-    api_key = get_api_key()
+    # 加载环境变量
+    load_dotenv()
+    api_key = os.getenv("SILICONFLOW_API_KEY")
+    if not api_key:
+        print("错误：未设置 SILICONFLOW_API_KEY 环境变量")
+        return
 
-    # 选择嵌入模型
-    model_name = select_model()
+    # 初始化教师管理器
+    teacher_manager = TeacherManager()
 
-    # 初始化组件
-    embeddings = SiliconFlowEmbeddings(api_key, model_name)
+    # 如果没有教师，添加默认教师
+    if not teacher_manager.teachers:
+        teacher_manager.add_teacher("李老师")
+        teacher_manager.add_teacher("王老师")
+
+    # 选择教师
+    selected_teacher = teacher_manager.select_teacher()
+    if not selected_teacher:
+        print("未选择教师，程序退出")
+        return
+
+    # 初始化向量存储
+    embeddings = SiliconFlowEmbeddings(api_key, select_model())
     vector_store = VectorStore(embeddings)
+
+    # 初始化聊天模块
     chat = Chat(api_key, vector_store)
+    chat.set_teacher(selected_teacher)  # 设置当前教师
 
     while True:
         print("\n=== 主菜单 ===")
@@ -86,14 +119,15 @@ def main():
         print("2. 查看知识库内容")
         print("3. 开始对话")
         print("4. 导出知识库内容")
-        print("5. 退出程序")
+        print("5. 切换教师")
+        print("6. 退出程序")
 
-        choice = input("\n请选择操作（1-5）：").strip()
+        choice = input("\n请选择操作（1-6）：").strip()
 
         if choice == "1":
-            load_documents(vector_store)
+            load_documents(vector_store, selected_teacher)
         elif choice == "2":
-            vector_store.print_all_segments()
+            vector_store.print_all_segments(selected_teacher)
         elif choice == "3":
             chat_loop(chat)
         elif choice == "4":
@@ -102,6 +136,11 @@ def main():
                 print(f"\n文档片段已按源文件分类导出到各自的目录中")
                 print(f"导出目录：{export_dir}")
         elif choice == "5":
+            new_teacher = teacher_manager.select_teacher()
+            if new_teacher:
+                selected_teacher = new_teacher
+                chat.set_teacher(selected_teacher)
+        elif choice == "6":
             print("\n感谢使用！再见！")
             break
         else:

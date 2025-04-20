@@ -131,8 +131,14 @@ class VectorStore:
         except Exception as e:
             print(f"保存文档列表时出错：{str(e)}")
 
-    def add_documents(self, documents: List[str], source: str):
-        """添加文档到向量存储"""
+    def add_documents(self, documents: List[str], source: str, teacher: str):
+        """添加文档到向量存储
+
+        Args:
+            documents: 文档内容列表
+            source: 文档来源/路径
+            teacher: 教师名称
+        """
         try:
             # 检查文档是否已存在
             if source in self.loaded_documents:
@@ -144,11 +150,21 @@ class VectorStore:
             for text in documents:
                 # 如果输入已经是 Document 对象，直接使用其 page_content
                 if isinstance(text, Document):
-                    doc = Document(page_content=text.page_content,
-                                   metadata={"source": source})
+                    doc = Document(
+                        page_content=text.page_content,
+                        metadata={
+                            "source": source,
+                            "teacher": teacher
+                        }
+                    )
                 else:
-                    doc = Document(page_content=str(text),
-                                   metadata={"source": source})
+                    doc = Document(
+                        page_content=str(text),
+                        metadata={
+                            "source": source,
+                            "teacher": teacher
+                        }
+                    )
                 docs_to_add.append(doc)
 
             self.vectorstore.add_documents(docs_to_add)
@@ -163,11 +179,12 @@ class VectorStore:
             import traceback
             print(traceback.format_exc())
 
-    def search(self, query: str, k: int = TOP_K_RESULTS) -> List[Tuple[Document, float]]:
+    def search(self, query: str, teacher: Optional[str] = None, k: int = TOP_K_RESULTS) -> List[Tuple[Document, float]]:
         """搜索相关文档
 
         Args:
             query: 搜索查询
+            teacher: 教师名称，如果指定则只搜索该教师的文档
             k: 返回结果数量
 
         Returns:
@@ -177,7 +194,15 @@ class VectorStore:
             print("知识库为空或未初始化")
             return []
 
-        results = self.vectorstore.similarity_search_with_score(query, k=k)
+        # 如果指定了教师，使用 where 过滤
+        if teacher:
+            results = self.vectorstore.similarity_search_with_score(
+                query,
+                k=k,
+                filter={"teacher": teacher}
+            )
+        else:
+            results = self.vectorstore.similarity_search_with_score(query, k=k)
 
         # 过滤低相似度结果
         filtered_results = [
@@ -202,37 +227,65 @@ class VectorStore:
                 seen_content.add(content)
                 unique_results.append((doc, score))
                 print(f"\n片段 {i} (相似度: {score:.4f}):")
+                print(f"教师: {doc.metadata.get('teacher', '未知')}")
                 print(content.strip())  # 使用 strip() 移除多余的空白字符
                 print("-" * 50)
 
         return unique_results
 
-    def print_all_segments(self):
-        """打印知识库中的所有文档分段信息"""
+    def print_all_segments(self, teacher: Optional[str] = None):
+        """打印所有文档片段
+
+        Args:
+            teacher: 教师名称，如果指定则只显示该教师的文档
+        """
         if not self.vectorstore:
-            print("\n知识库为空或未初始化")
+            print("知识库为空或未初始化")
             return
 
         try:
             # 获取所有文档
-            documents = self.vectorstore.get()
-            if not documents['documents']:
-                print("\n知识库中没有文档")
+            collection = self.vectorstore._collection
+            if not collection:
+                print("知识库中没有文档")
+                return
+
+            # 获取所有文档内容和元数据
+            result = collection.get()
+            if not result['documents']:
+                print("知识库中没有文档")
+                return
+
+            # 过滤指定教师的文档
+            filtered_docs = []
+            for doc, metadata in zip(result['documents'], result['metadatas']):
+                if teacher and metadata.get('teacher') != teacher:
+                    continue
+                filtered_docs.append((doc, metadata))
+
+            if not filtered_docs:
+                if teacher:
+                    print(f"\n{teacher}的知识库中没有文档")
+                else:
+                    print("\n知识库中没有文档")
                 return
 
             print("\n=== 知识库文档分段信息 ===")
-            print(f"总文档数：{len(documents['documents'])}")
+            print(f"总文档数：{len(filtered_docs)}")
             print("=" * 50)
 
-            for i, (doc, metadata) in enumerate(zip(documents['documents'], documents['metadatas']), 1):
+            for i, (content, metadata) in enumerate(filtered_docs, 1):
                 print(f"\n文档片段 {i}:")
-                if metadata:
-                    print(f"元数据：{metadata}")
-                print(f"内容：\n{doc}")
-                print("-" * 50)
+                print(f"元数据：{metadata}")
+                print("内容：")
+                print(content.strip())  # 使用 strip() 移除多余的空白字符
+                print("=" * 50)
 
         except Exception as e:
             print(f"获取知识库内容时出错：{str(e)}")
+            import traceback
+            print("错误详情：")
+            print(traceback.format_exc())
 
     def get_loaded_documents(self) -> List[str]:
         """获取已加载的文档列表
